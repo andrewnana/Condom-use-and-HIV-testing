@@ -1,0 +1,359 @@
+---
+title: 'Assessing the association between condomn use and HIV testing: evidence from
+  the 2020 NYC Community Health Survey'
+author: "Andre Nana"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+# Introduction and Research question
+
+The incidence and prevalence of the infection by the Human
+Immunodeficiency Virus (HIV), as well as the severity of the associated
+disease, have significantly decreased worldwide. This progress has been
+made possible due to improved understanding of the pathogen and its
+pathogenesis (Harper et al. 2024), increased access to antiretroviral
+therapy (ART) (Cao, Hsieh, and Li 2020), enhanced HIV testing and
+awareness, effective prevention of mother-to-child transmission (Hurst,
+Appelgren, and Kourtis 2015), greater availability of pre-exposure
+prophylaxis (PrEP) (Liegeon, Delaugerre, and Molina 2024; Zappas and
+Foreman 2020), and targeted interventions for key populations and
+high-impact regions (Volberding 2011). These and other measures have
+contributed to a reduction in the number of new infections. However, the
+HIV pandemic remains a public health challenge, particularly among
+specific populations such as men who have sex with men (MSM). Sexual
+transmission is the primary route of infection, making condom use an
+effective prevention method. Additionally, knowing one’s HIV status
+allows infected individuals to receive early care before the disease
+progresses to complications, such as HIV-related opportunistic
+infections, and helps protect sexual partners from possible
+transmission. Some studies have explored the link between HIV testing
+and condom use, with findings indicating that being tested for HIV in
+the past two years was a predictor of condom use (Agha 2012).
+
+In the present analysis, we aim to examine the association between
+condom use during the last sexual intercourse and HIV testing within the
+last 12 months, among sexually active individuals. We hypothesize that
+individuals who use condoms are more likely to get tested for HIV.
+
+# Methods
+
+The data was derived from the 2020 New York City Community Health Survey
+(CHS), an annual telephone survey that provides valuable public health
+information on New York City residents. This survey collects information
+on chronic diseases, behavioral risk factors, and other health topics to
+track the health of New Yorkers and inform public health programs. Our
+outcome variable is hiv12months20, which assesses whether the
+participant had an HIV test in the last 12 months. The exposure of
+interest is condom use or condom20, which assesses whether the
+participant used a condom during their last sexual relationship. We
+decided to adjust for these potential confounders: age, race, number of
+sexual partners, but also marital status (maritalstatus20), and
+education. For marital status, we hypothesize that married people are
+less likely to use condoms (especially when they live with and are
+faithful to one seronegative partner) and also less likely to feel the
+need to get tested for HIV. For education, we anticipate that people
+with higher education will have more health-conscious behaviors and,
+therefore, use condoms and get tested more frequently than people with
+lower education. These 2 additional variables could be potential
+confounders to be taken into account in our analysis. We will first
+provide the demographic distribution of our study poopulation, then
+perform a logistic regression with the 3 first variables, then add a
+model with the 2 other models - namely marital status and education - to
+assess whether it improves our model fit.
+
+# Results
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=80),tidy=TRUE, echo = TRUE, message = FALSE)
+```
+
+## Importing the raw data, recoding, and setting up the survey design
+
+```{r, cache=TRUE}
+library(haven)
+library(tidyverse)
+# raw data
+chs21 <- read_sas("https://www1.nyc.gov/assets/doh/downloads/sas/episrv/chs2020_public.sas7bdat")
+```
+
+```{r}
+# first we convert sexual number of sexual partners and education into an an ordered categorical variable
+
+chs21 <- chs21 |> 
+  mutate(
+    sexpartner = case_when(
+      sexpartner == 1 ~ "0",
+      sexpartner == 2 ~ "1",
+      sexpartner == 3 ~ "2",
+      sexpartner == 4 ~ "=>3",
+      TRUE ~ NA_character_),
+    sexpartner = factor(sexpartner, levels = c("0", "1", "2", "=>3"), ordered = TRUE)) |>
+  
+  mutate(
+   education = case_when(
+     education == 1 ~ "Less than high school",
+     education == 2 ~ "High school graduate",
+     education == 3 ~ "Some college/technical school",
+     education == 4 ~ "College graduate",
+     TRUE ~ NA_character_),
+   education  = factor(education, levels = c("Less than high school", "High school graduate", "Some college/technical school", "College graduate"), ordered = TRUE))
+
+# recoding other variables in a new dataset called chs21_recode
+chs21_recode <-
+  transform(chs21, 
+            newrace = recode_factor(newrace, `1`="White/N_african/Mid_Eastern, non-Hispanic", 
+                                              `2`="Black, non-Hispanic", 
+                                              `3`="Hispanic", 
+                                              `4`="Asian/PI, non-Hispanic",
+                                              `5`="Other, non-Hispanic"),
+            agegroup = recode_factor(agegroup, 
+                                     `1` = "18-24",
+                                     `2` = "25-44",
+                                     `3` = "45-64",
+                                     `4` = "65+"),
+            hiv12months20 = recode_factor(hiv12months20,
+                                          `2` = "No",  # put first to make "No" the reference group
+                                          `1` = "Yes"),
+            condom20 = recode_factor(condom20,
+                                     `2` = "No",
+                                     `1` = "Yes"),
+            
+          # besides the 6 values, marital status is ".d" for "Don't know" and ".r" for "Refused", all coded  as NA in the raw dataset (chs21)  
+           maritalstatus20 = recode_factor(maritalstatus20,
+                                    `1`= "Married",
+                                    `2`= "Divorced",
+                                    `3`= "Widowed",
+                                    `4`= "Separated",     
+                                    `5`= "Never married",      
+                                    `6`= "Unmarried living together",
+                                     .default = NA_character_),
+           ## survey strata:
+            strata = as.character(strata))
+
+# Setting up the survey design
+library(survey)
+chs.dsgn <-
+  svydesign(
+    ids = ~ 1,
+    strata = ~ strata,
+    weights =  ~ wt21_dual, 
+    data = chs21_recode, 
+    nest = TRUE,
+    na.rm = TRUE
+  )
+```
+
+## Table one
+
+### Subsetting variables of interest
+
+We subset our variables of interest since the original dataset includes
+142 variables, most of which will not be used in our analysis
+
+```{r}
+chs21_subset <- chs21_recode |> 
+  select(hiv12months20, condom20, newrace, agegroup, sexpartner, maritalstatus20, education)
+
+# Renaming variables for a better readability
+
+chs21_subset <- chs21_subset |> rename(
+  `HIV testing` = hiv12months20,
+  `Condom use` = condom20,
+  Race = newrace,
+  `Age groups in years` = agegroup,
+  `Number of sexual partners` = sexpartner,
+  `Marital status` = maritalstatus20,
+  Education = education )
+```
+
+### Visualizing missing data
+
+Here we assess missing data, using the following functions:
+
+-   vis_miss() from the library naniar which provides the total
+    percentage of observations with at list a missing value, but also
+    the percentage of missing values per variable.
+
+-   gg_miss_upset(), also from naniar, which provides a combination of
+    missing values across multiple variables
+
+-   We also assessed the total number of missing values per variable
+    with
+    `na_count <- chs21_subset %>% summarize_all(~sum(is.na(.))) print(t(na_count))`
+
+-   Since the highest combination of missing values is between
+    `Condom use` and `Number of sexual partners`, we proceeded with a
+    cross tabulation of these 2 variables, which shows the number of
+    missing values across all levels of these variables.
+
+```{r}
+# Assessing and visualizing missing data
+library(naniar)
+vis_miss(chs21_subset)
+gg_miss_upset(chs21_subset)
+
+na_count <- chs21_subset %>% 
+  summarize_all(~sum(is.na(.)))
+print(t(na_count))
+
+# Condomn use per sexual partner, taking NAs into account
+table(chs21_subset$`Number of sexual partner`, chs21_subset$`Condom use`, useNA = "ifany")
+```
+
+***Remarks:***
+
+-   There are ***3688*** missing values for `Condom use`, which
+    corresponds to approximatly 42% of the total number of observations
+
+-   In the two-by-two table between `Condom use` and
+    `Number of sexual partners`, we observe that the majority of missing
+    data on condom use, 2686 (or 72.83%), are for people who reported
+    having no partner in the last 12 months. Another 861 missing values
+    for condom use (23.34%) are also missing values for sex partner. So
+    a total of 3547, or 96.17%, of the missing values for `Condom use`
+    are for people who did not have a sexual partner in the last 12
+    months or have a missing values for `Number of sexual partners`.
+
+-   Given that the condom use question was asked to sexually active
+    individuals, we will restrict our Table 1 to those who provided a
+    response, either "yes" or "no". We hypothesize that the missing data
+    for `Condom use` are those who were not sexually active, and
+    therefore, not of interest to us, given our research question.
+
+### Demographic table
+
+Only complete cases have been used to generate Table 1
+
+```{r}
+library(table1)
+table1(~ `HIV testing` + Race + `Age groups in years` + `Number of sexual partners` + `Marital status` + Education | `Condom use` ,
+       data = chs21_subset[complete.cases(chs21_subset), ],
+       caption = "Characteristics of the study population, stratified by condomn use",
+       footnote = "Data from the 2020 New York City Community Health Survey ")
+```
+
+-   In this demographic table, the majority of participants who reported
+    not having used condoms, were in the "White, Nord African, Midle
+    Eastern, non-Hispanic" racial group, with 1313 participants (37.5%).
+
+-   On the other hand, the majority of those who reported condomn use
+    were hispanics, with 471 participants (31.5%).
+
+-   As expected, more than half (1951 participants or 55.7%) of those
+    who reported not having used a condom reported being married as
+    well.
+
+-   However, more than half of people who reported not having used a
+    condom, also had a college level education. Furthermore, the
+    majority of college-level educated reported not having used a condom
+    (1803 no versus 682 yes or 72.55%), which is the contrary of what we
+    expected.
+
+## **Logistic regression**
+
+Model 1: In model one, we explore the association between `Condom use`
+and `HIV testing`, adjusted for `Race`, `Age groups in years` and
+`Number of sexual partners`, using the svyglm() function with family =
+"quasibinomial" since we have 2 ordered categorical variables:
+`Number of sexual partners` and `Education`.
+
+*NB: svyglm() excludes NAs by default.*
+
+```{r}
+library(svydiags)
+fit1 <- svyglm(hiv12months20 ~ condom20 +  newrace + agegroup + sexpartner,
+              design = chs.dsgn,family="quasibinomial") 
+summary(fit1)
+library(gtsummary)
+tmod1<- tbl_regression(fit1, exponentiate = TRUE)
+tmod1
+```
+
+***The odds of having HIV test the last 12 months among those who used
+condoms during the last time they had sex was 1.1 times the odds among
+those who did not use condoms, adjusted for age, race and number of
+sexual partners. However, the 95% Confidence interval (0.90, 1.36)
+contains the null value of 1. Therefore, we cannot reject the null
+hypothesis, and we conclude that there is no association between condom
+use and hiv testing.***
+
+Model 2: In this model, with expand the number of covariates, with
+`Marital status` and `Education`.
+
+```{r}
+fit2 <- svyglm(hiv12months20 ~ condom20 + newrace + agegroup + sexpartner + maritalstatus20  + education, design = chs.dsgn, family="quasibinomial") 
+summary(fit2)
+tmod2<- tbl_regression(fit2, exponentiate = TRUE)
+tmod2
+```
+
+***The odds of having HIV test the last 12 months among those who used
+condoms during their last time they had sex, was 0.98 times the odds
+among those who did not use condoms, adjusted for age, race, number of
+sexual partners, marital status and education. However, the 95%
+confidence interval (0.79, 1.21) contains the null value of 1.
+Therefore, we cannot reject the null hypothesis, and we conclude that
+there is no association between condom use and hiv testing.***
+
+### Comparing the two models
+
+```{r}
+# Model 1
+AIC(fit1)
+deviance(fit1)
+
+# Model 2
+AIC(fit2)
+deviance(fit2)
+```
+
+# Conclusion
+
+***In conclusion, the second model with marital status and education did
+improved our model fit a little bit, with a deviance of 6004.003 for
+fit2 versus 6129.254 for fit1, and a AIC of 6083.129455 for fit2 versus
+6174.896042 for fit1. However, in both models, condom use was not
+associated with HIV testing.***
+
+# References
+
+Agha, Sohail. 2012. “Factors Associated with HIV Testing and Condom Use
+in Mozambique: Implications for Programs.” Reproductive Health 9 (1).
+<https://doi.org/10.1186/1742-4755-9-20>.
+
+Cao, Wei, Evelyn Hsieh, and Taisheng Li. 2020. “Optimizing Treatment for
+Adults with HIV/AIDS in China: Successes over Two Decades and Remaining
+Challenges.” Current HIV/AIDS Reports 17 (1): 26–34.
+<https://doi.org/10.1007/s11904-019-00478-x>.
+
+Harper, Justin, Michael Betts, Mathias Lichterfeld, Michaela
+Müller-Trutwin, David Margolis, Katharine Bar, Jonathan Li, et al. 2024.
+“Progress Note 2024: Curing HIV; Not in My Lifetime or Just Around the
+Corner?” Pathogens and Immunity 8 (2): 115–57.
+<https://doi.org/10.20411/pai.v8i2.665>.
+
+Hurst, Stacey A, Kristie E Appelgren, and Athena P Kourtis. 2015.
+“Prevention of Mother-to-Child Transmission of HIV Type 1: The Role of
+Neonatal and Infant Prophylaxis.” Expert Review of Anti-Infective
+Therapy 13 (2): 169–81. <https://doi.org/10.1586/14787210.2015.999667>.
+
+Liegeon, Geoffroy, Constance Delaugerre, and Jean-Michel Molina. 2024.
+“HIV Pre-Exposure Prophylaxis.” Infectious Disease Clinics of North
+America 38 (3): 453–74. <https://doi.org/10.1016/j.idc.2024.04.003>.
+
+Volberding, P. 2011. “The Impact of HIV Research on Health Outcome and
+Healthcare Policy.” Annals of Oncology 22 (November): vii50–53.
+<https://doi.org/10.1093/annonc/mdr426>.
+
+Zappas, Michelle Peters, and Ruth Madden Foreman. 2020. “PrEParing for
+Preexposure Prophylaxis.” Journal of Doctoral Nursing Practice 13 (1):
+3–8. <https://doi.org/10.1891/2380-9418.jdnp-d-19-00033>.
