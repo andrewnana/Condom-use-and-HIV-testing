@@ -1,4 +1,5 @@
 # Disclaimer
+This analysis is intended for educational and research purposes only and has not been peer-reviewed. While efforts have been made to ensure the accuracy of the methods and results, the author does not guarantee the correctness or completeness of the analysis. The author bears no responsibility or liability for any errors, omissions, or outcomes resulting from the use of this material. Use at your own discretion.
 
 # Condom-use-and-HIV-testing
 The incidence and prevalence of the infection by the Human
